@@ -1,19 +1,25 @@
 import madmom, couchdb, os
+import librosa
 
 FPS = 100
 
 class FeatureExtractor:
     def __init__(self):
-        self.audio_path = '/Volumes/FAST-VMs/snd/deezer-moodplay/'
+        # self.audio_path = '/Volumes/FAST-VMs/snd/deezer-moodplay/'
+        self.audio_path = '/Users/alo/snd/deezer-moodplay/'
         server = couchdb.Server()
         self.db = server['moodplay-features']
 
     def run(self):
         for filename in os.listdir(self.audio_path):
             fullpath = os.path.join(self.audio_path, filename)
-            json = self.extract_madmom(fullpath)
-            print(json)
-            print("\n\n\n")
+            if os.path.getsize(fullpath) > 1000 and filename > "00ac8821-8e3a-4cc1-a160-e17e5a296611.mp3":
+                json = self.extract_madmom(fullpath)
+                json["_id"] = filename.split(".")[0]
+                self.db.save(json)
+                print(json["_id"])
+                # print(json)
+                # print("\n\n\n")
 
     def extract_madmom(self, path):
         signal = madmom.audio.signal.Signal(path)
@@ -21,11 +27,13 @@ class FeatureExtractor:
         chords = self.extract_chords(signal)
         tempo = self.extract_tempo(signal)
         beats = self.extract_beats(signal)
+        # mfcc = self.extract_mfcc(path)
         return {
             "key": key,
             "chords": [ { "start": round(c[0], 4), "end": round(c[1], 4), "chord": c[2] } for c in chords.tolist()],
             "tempo": [ { "tempo": t[0], "strength": t[1] } for t in tempo.tolist() if t[1] > 0.1 ],
-            "beats": [ { "start": b[0], "position": int(b[1]) } for b in beats.tolist() ]
+            "beats": [ { "start": b[0], "position": int(b[1]) } for b in beats.tolist() ],
+            # "mfcc": mfcc.tolist()
         }
 
     def extract_key(self, signal):
@@ -49,9 +57,9 @@ class FeatureExtractor:
         act = madmom.features.beats.RNNBeatProcessor()(signal)
         return proc(act)
 
-    def exract_mfcc(self, signal, beats):
-        proc = madmom.features.downbeats.SyncronizeFeaturesProcessor(beats, FPS)
-        mfcc = proc(signal)
+    def extract_mfcc(self, path, hop):
+        y, sr = librosa.load(path)
+        mfcc = librosa.feature.mfcc(y=y, sr=sr)
         return mfcc
 
 FeatureExtractor().run()
