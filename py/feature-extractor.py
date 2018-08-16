@@ -1,5 +1,5 @@
-import madmom, couchdb, os
-import librosa
+import couchdb, os
+# import madmom, librosa
 
 FPS = 100
 
@@ -7,8 +7,8 @@ class FeatureExtractor:
     def __init__(self):
         # self.audio_path = '/Volumes/FAST-VMs/snd/deezer-moodplay/'
         self.audio_path = '/Users/alo/snd/deezer-moodplay/'
-        server = couchdb.Server()
-        self.db = server['moodplay-features']
+        self.server = couchdb.Server()
+        self.db = self.server['moodplay-features']
 
     def run(self):
         for filename in os.listdir(self.audio_path):
@@ -62,4 +62,19 @@ class FeatureExtractor:
         mfcc = librosa.feature.mfcc(y=y, sr=sr)
         return mfcc
 
-FeatureExtractor().run()
+    def merge_db(self):
+        mfdb = self.server["moodplay-features-mfcc"]
+        merged = self.server["moodplay-features-merged"]
+        for _id in self.db:
+            doc = self.db.get(_id)
+            mfcc = mfdb.get(_id)
+            json = { "_id": _id  }
+            json["beats"] = doc["beats"]
+            json["chords"] = doc["chords"]
+            json["key"] = doc["key"]
+            json["tempo"] = doc["tempo"]
+            json["mfcc"] = mfcc["librosa"]["mfcc"]
+            merged.save(json)
+
+# FeatureExtractor().run()
+FeatureExtractor().merge_db()
