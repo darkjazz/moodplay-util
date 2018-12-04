@@ -1,22 +1,26 @@
-import couchdb, os
-# import madmom, librosa
+import couchdb, os, json
+# import madmom
+import librosa
+import numpy as np
 
 FPS = 100
 
 class FeatureExtractor:
     def __init__(self):
-        # self.audio_path = '/Volumes/FAST-VMs/snd/deezer-moodplay/'
-        self.audio_path = '/Users/alo/snd/deezer-moodplay/'
+        self.audio_path = '/Users/alo/snd/deezer-mood-test/'
+        # self.audio_path = '/Users/alo/snd/deezer-moodplay/'
         self.server = couchdb.Server()
-        self.db = self.server['moodplay-features']
+        self.db = self.server['moodplay-features-merged']
 
     def run(self):
         for filename in os.listdir(self.audio_path):
             fullpath = os.path.join(self.audio_path, filename)
-            if os.path.getsize(fullpath) > 1000 and filename > "00ac8821-8e3a-4cc1-a160-e17e5a296611.mp3":
-                json = self.extract_madmom(fullpath)
+            # if os.path.getsize(fullpath) > 1000 and filename > "00ac8821-8e3a-4cc1-a160-e17e5a296611.mp3":
+            if True:
                 json["_id"] = filename.split(".")[0]
-                self.db.save(json)
+                # json = self.extract_madmom(fullpath)
+                json = self.extract_loudness(fullpath)
+                # self.db.save(json)
                 print(json["_id"])
                 # print(json)
                 # print("\n\n\n")
@@ -57,11 +61,6 @@ class FeatureExtractor:
         act = madmom.features.beats.RNNBeatProcessor()(signal)
         return proc(act)
 
-    def extract_mfcc(self, path, hop):
-        y, sr = librosa.load(path)
-        mfcc = librosa.feature.mfcc(y=y, sr=sr)
-        return mfcc
-
     def merge_db(self):
         mfdb = self.server["moodplay-features-mfcc"]
         merged = self.server["moodplay-features-merged"]
@@ -76,5 +75,93 @@ class FeatureExtractor:
             json["mfcc"] = mfcc["librosa"]["mfcc"]
             merged.save(json)
 
+class LibrosaExtractor:
+    def __init__(self):
+        self.audio_path = '/Users/alo/snd/deezer-moodplay/'
+        self.server = couchdb.Server()
+        self.db_from = self.server['moodplay-features-merged']
+        self.db_to = self.server['moodplay-features']
+
+    def run(self):
+        for filename in os.listdir(self.audio_path):
+            fullpath = os.path.join(self.audio_path, filename)
+            if os.path.getsize(fullpath) > 1000: #and filename > "00ac8821-8e3a-4cc1-a160-e17e5a296611.mp3":
+            # if True:
+                _id = filename.split(".")[0]
+                doc = self.db_from.get(_id)
+                amp, mfcc = self.collect_features(fullpath, doc["beats"])
+                json = { "_id": _id }
+                json["beats"] = doc["beats"]
+                json["chords"] = doc["chords"]
+                json["key"] = doc["key"]
+                json["tempo"] = doc["tempo"]
+                json["amplitude"] = amp
+                json["mfcc"] = mfcc
+                self.db_to.save(json)
+                print(_id)
+
+    def collect_features(self, path, beats):
+        audio, sr = librosa.load(path)
+        amp = self.extract_loudness(audio)
+        mfcc = self.extract_mfcc(audio, sr)
+        n_frames = len(mfcc.T)
+        b_amps = []
+        b_mfcc = []
+        total_dur = beats[0]['start'] + beats[-1]['start']
+        for i in range(len(beats)-2):
+            ths, nxt = beats[i:i+2]
+            first = self.linlin(ths["start"], 0.0, total_dur, 0, n_frames)
+            last = self.linlin(nxt["start"], 0.0, total_dur, 0, n_frames)
+            fra = np.mean(amp[int(first):int(last)])
+            frm = np.mean(mfcc.T[int(first):int(last)], axis=0)
+            b_amps.append({
+                "start": ths["start"],
+                "value": float(np.around(fra, 5))
+            })
+            b_mfcc.append({
+                "start": ths["start"],
+                "value": frm.tolist()
+            })
+        return (b_amps, b_mfcc)
+
+    def extract_mfcc(self, audio, sr):
+        mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=13)
+        return mfcc
+
+    def extract_loudness(self, audio):
+        S = librosa.stft(audio)
+        power = np.abs(S)**2
+        p_mean = np.sum(power, axis=0, keepdims=True)
+        db = librosa.power_to_db(p_mean, ref=np.max(power))
+        amp = librosa.db_to_amplitude(db)
+        return amp[0]
+
+    def linlin(self, v, imn, imx, omn, omx):
+        return (v-imn)/(imx-imn)*(omx-omn)+omn;
+
+class JsonWriter:
+    def __init__(self):
+        self.server = couchdb.Server()
+        self.db = self.server['moodplay-features']
+        self.path = "../data/features.json"
+
+    def run(self):
+        data = { }
+        for _id in self.db:
+            doc = self.db.get(_id)
+            data[_id] = {
+                "amplitude": doc["amplitude"],
+                "beats": doc["beats"],
+                "chords": doc["chords"],
+                "key": doc["key"],
+                "mfcc": doc["mfcc"],
+                "tempo": doc["tempo"]
+            }
+        with open(self.path, "w") as wf:
+            wf.write(json.dumps(data))
+            wf.close()
+
 # FeatureExtractor().run()
-FeatureExtractor().merge_db()
+# FeatureExtractor().merge_db()
+# LibrosaExtractor().run()
+JsonWriter().run()
